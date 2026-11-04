@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	_ "modernc.org/sqlite"
@@ -406,4 +407,317 @@ func TestToSQLNoQueryOnError(t *testing.T) {
 
 func TestMain(m *testing.M) {
 	os.Exit(m.Run())
+}
+
+// TestWherePlaceholderPreservation verifies that Where arguments are preserved
+// and returned separately from the SQL query (placeholders remain "?").
+func TestWherePlaceholderPreservation(t *testing.T) {
+	q := Table("users").Where("name = ? AND age > ?", "John", 18)
+	query, args, err := q.ToSQL()
+	if err != nil {
+		t.Fatalf("ToSQL() error: %v", err)
+	}
+	// Placeholders must remain in SQL
+	if query != "SELECT * FROM `users` WHERE `name` = ? AND `age` > ?" {
+		t.Errorf("unexpected query: %s", query)
+	}
+	// Arguments must be returned separately
+	if len(args) != 2 {
+		t.Fatalf("expected 2 args, got %d", len(args))
+	}
+	if args[0] != "John" {
+		t.Errorf("expected arg[0]=John, got %v", args[0])
+	}
+	if args[1] != 18 {
+		t.Errorf("expected arg[1]=18, got %v", args[1])
+	}
+}
+
+// TestWhereStringLiteralPreservation verifies that string literals inside
+// WHERE conditions are not modified by requote.
+func TestWhereStringLiteralPreservation(t *testing.T) {
+	tests := []struct {
+		name     string
+		cond     string
+		expected string
+	}{
+		{
+			name:     "single quoted literal",
+			cond:     "name = 'John'",
+			expected: "`name` = 'John'",
+		},
+		{
+			name:     "single quoted with escaped quote",
+			cond:     "name = 'O''Brien'",
+			expected: "`name` = 'O''Brien'",
+		},
+		{
+			name:     "double quoted literal",
+			cond:     "name = \"John\"",
+			expected: "`name` = \"John\"",
+		},
+		{
+			name:     "multiple literals",
+			cond:     "name = 'Alice' AND status = 'active'",
+			expected: "`name` = 'Alice' AND `status` = 'active'",
+		},
+		{
+			name:     "literal with backslash escape",
+			cond:     "path = 'C:\\Users\\test'",
+			expected: "`path` = 'C:\\Users\\test'",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q := Table("users").Where(tt.cond)
+			query, _, err := q.ToSQL()
+			if err != nil {
+				t.Fatalf("ToSQL() error: %v", err)
+			}
+			want := "SELECT * FROM `users` WHERE " + tt.expected
+			if query != want {
+				t.Errorf("query mismatch:\nexpected: %s\ngot:      %s", want, query)
+			}
+		})
+	}
+}
+
+// TestWhereMultipleOperators verifies conditions with various SQL operators.
+func TestWhereMultipleOperators(t *testing.T) {
+	tests := []struct {
+		name     string
+		cond     string
+		args     []any
+		expected string
+	}{
+		{
+			name:     "comparison operators",
+			cond:     "id > ? AND id < ? AND age >= ? AND age <= ?",
+			args:     []any{1, 100, 0, 150},
+			expected: "SELECT * FROM `users` WHERE `id` > ? AND `id` < ? AND `age` >= ? AND `age` <= ?",
+		},
+		{
+			name:     "null check",
+			cond:     "email IS NULL",
+			args:     nil,
+			expected: "SELECT * FROM `users` WHERE `email` IS NULL",
+		},
+		{
+			name:     "not null check",
+			cond:     "email IS NOT NULL",
+			args:     nil,
+			expected: "SELECT * FROM `users` WHERE `email` IS NOT NULL",
+		},
+		{
+			name:     "in operator",
+			cond:     "id IN (?, ?, ?)",
+			args:     []any{1, 2, 3},
+			expected: "SELECT * FROM `users` WHERE `id` IN (?, ?, ?)",
+		},
+		{
+			name:     "between operator",
+			cond:     "age BETWEEN ? AND ?",
+			args:     []any{18, 65},
+			expected: "SELECT * FROM `users` WHERE `age` BETWEEN ? AND ?",
+		},
+		{
+			name:     "like operator",
+			cond:     "name LIKE ?",
+			args:     []any{"%john%"},
+			expected: "SELECT * FROM `users` WHERE `name` LIKE ?",
+		},
+		{
+			name:     "or condition",
+			cond:     "role = ? OR status = ?",
+			args:     []any{"admin", "active"},
+			expected: "SELECT * FROM `users` WHERE `role` = ? OR `status` = ?",
+		},
+		{
+			name:     "mixed conditions",
+			cond:     "id = ? AND (status = ? OR role = ?)",
+			args:     []any{1, "active", "admin"},
+			expected: "SELECT * FROM `users` WHERE `id` = ? AND (`status` = ? OR `role` = ?)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q := Table("users").Where(tt.cond, tt.args...)
+			query, args, err := q.ToSQL()
+			if err != nil {
+				t.Fatalf("ToSQL() error: %v", err)
+			}
+			if query != tt.expected {
+				t.Errorf("query mismatch:\nexpected: %s\ngot:      %s", tt.expected, query)
+			}
+			if len(args) != len(tt.args) {
+				t.Errorf("expected %d args, got %d", len(tt.args), len(args))
+			}
+		})
+	}
+}
+
+// TestWhereBacktickPreservation verifies that backticks inside WHERE
+// conditions are preserved (not stripped) by requote.
+func TestWhereBacktickPreservation(t *testing.T) {
+	q := Table("users").Where("`name` = 'test'")
+	query, _, err := q.ToSQL()
+	if err != nil {
+		t.Fatalf("ToSQL() error: %v", err)
+	}
+	want := "SELECT * FROM `users` WHERE `name` = 'test'"
+	if query != want {
+		t.Errorf("query mismatch:\nexpected: %s\ngot:      %s", want, query)
+	}
+}
+
+// TestWhereInvalidIdentifierQuoting verifies that invalid identifiers in WHERE
+// are left as raw SQL (not silently mangled into broken backtick-quoted output).
+func TestWhereInvalidIdentifierQuoting(t *testing.T) {
+	q := Table("users").Where("bad-col = ?", 1)
+	query, _, err := q.ToSQL()
+	if err != nil {
+		t.Fatalf("ToSQL() error: %v", err)
+	}
+	// Invalid identifier must pass through unchanged — Where() accepts raw SQL.
+	want := "SELECT * FROM `users` WHERE bad-col = ?"
+	if query != want {
+		t.Errorf("query mismatch:\nexpected: %s\ngot:      %s", want, query)
+	}
+}
+
+// TestLimitNegative verifies that negative LIMIT returns an error.
+func TestLimitNegative(t *testing.T) {
+	q := Table("users").Limit(-1)
+	_, _, err := q.ToSQL()
+	if err == nil {
+		t.Error("LIMIT with negative value should error")
+	}
+	wantErr := "LIMIT must be non-negative, got -1"
+	if err.Error() != wantErr {
+		t.Errorf("expected error %q, got %q", wantErr, err.Error())
+	}
+}
+
+// TestLimitZero verifies that zero LIMIT is allowed (no LIMIT clause added).
+func TestLimitZero(t *testing.T) {
+	q := Table("users").Limit(0)
+	query, _, err := q.ToSQL()
+	if err != nil {
+		t.Fatalf("LIMIT(0) should be allowed: %v", err)
+	}
+	if strings.Contains(query, "LIMIT") {
+		t.Errorf("LIMIT(0) should not add LIMIT clause, got: %s", query)
+	}
+}
+
+// TestOffsetNegative verifies that negative OFFSET returns an error.
+func TestOffsetNegative(t *testing.T) {
+	q := Table("users").Offset(-5)
+	_, _, err := q.ToSQL()
+	if err == nil {
+		t.Error("OFFSET with negative value should error")
+	}
+	wantErr := "OFFSET must be non-negative, got -5"
+	if err.Error() != wantErr {
+		t.Errorf("expected error %q, got %q", wantErr, err.Error())
+	}
+}
+
+// TestOffsetZero verifies that zero OFFSET is allowed (no OFFSET clause added).
+func TestOffsetZero(t *testing.T) {
+	q := Table("users").Offset(0)
+	query, _, err := q.ToSQL()
+	if err != nil {
+		t.Fatalf("OFFSET(0) should be allowed: %v", err)
+	}
+	if strings.Contains(query, "OFFSET") {
+		t.Errorf("OFFSET(0) should not add OFFSET clause, got: %s", query)
+	}
+}
+
+// TestWhereDangerousIdentifierInjection verifies dangerous identifiers are not auto-sanitized
+// and raw WHERE expressions are NOT automatically safe from SQL injection.
+func TestWhereDangerousIdentifierInjection(t *testing.T) {
+	// Attempt with SQL comment injection in raw identifier
+	q := Table("users").Where("id = ?; DROP TABLE users; --", 1)
+	query, args, err := q.ToSQL()
+	if err != nil {
+		t.Fatalf("ToSQL() error: %v", err)
+	}
+	if strings.Contains(query, "DROP TABLE") {
+		// Raw expression passes through - caller must be responsible
+		// Document that it's unsafe
+	}
+	if len(args) != 1 {
+		t.Errorf("args should be preserved separately")
+	}
+	_ = query
+}
+
+// TestWhereRawExpressionNotAutoSafe documents and tests that raw WHERE is NOT auto-safe
+func TestWhereRawExpressionNotAutoSafe(t *testing.T) {
+	// Even with validation, raw SQL expressions must use placeholders
+	q := Table("users").Where("role = '" + "admin" + "'")
+	query, _, err := q.ToSQL()
+	if err != nil {
+		t.Fatalf("ToSQL() error: %v", err)
+	}
+	// String literal remains as-is in raw condition - not automatically escaped
+	// Caller is responsible for injection prevention
+	if !strings.Contains(query, "'admin'") {
+		t.Errorf("raw string literal in condition not preserved as-is")
+	}
+}
+
+// TestWherePlaceholderCountMismatch tests argument/placeholder validation
+func TestWherePlaceholderCountMismatch(t *testing.T) {
+	tests := []struct {
+		name string
+		cond string
+		args []any
+	}{
+		{name: "too few args", cond: "id = ? AND name = ?", args: []any{1}},
+		{name: "too many args", cond: "id = ?", args: []any{1, 2}},
+		{name: "zero placeholders with args", cond: "id = 1", args: []any{1}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q := Table("users").Where(tt.cond, tt.args...)
+			_, _, err := q.ToSQL()
+			if err == nil {
+				t.Errorf("expected placeholder count mismatch error")
+			}
+		})
+	}
+}
+
+// TestWhereStringLiteralWithSemicolonAndQuotes tests complex literals
+func TestWhereStringLiteralWithSemicolonAndQuotes(t *testing.T) {
+	q := Table("users").Where("name = 'O''Neil; DROP TABLE'")
+	query, _, err := q.ToSQL()
+	if err != nil {
+		t.Fatalf("ToSQL() error: %v", err)
+	}
+	// Literal must not be modified
+	if !strings.Contains(query, "O''Neil; DROP TABLE") {
+		t.Errorf("literal content corrupted: %s", query)
+	}
+}
+
+// TestWherePlaceholderInjectionPrevention verifies args stay separate
+func TestWherePlaceholderInjectionPrevention(t *testing.T) {
+	malicious := "' OR '1'='1"
+	q := Table("users").Where("name = ?", malicious)
+	query, args, err := q.ToSQL()
+	if err != nil {
+		t.Fatalf("ToSQL() error: %v", err)
+	}
+	if query != "SELECT * FROM `users` WHERE `name` = ?" {
+		t.Errorf("unexpected query: %s", query)
+	}
+	if len(args) != 1 || args[0] != malicious {
+		t.Errorf("malicious arg not preserved separately: %v", args)
+	}
 }

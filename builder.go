@@ -54,13 +54,19 @@ func (q *QueryBuilder) Select(cols ...string) *QueryBuilder {
 }
 
 // Where adds a WHERE clause condition.
-// The condition string is taken as‑is; identifiers are quoted safely.
-// Do NOT embed user‑provided literals; use placeholders ("?") for values.
+//
+// The condition string is taken as-is; identifiers are quoted safely by ToSQL().
+// Placeholders ("?") are used for values and passed as separate arguments.
+//
+// Security note: Where accepts raw SQL expressions from the caller. The condition
+// expression itself is not validated for safety — values MUST use placeholders
+// to prevent SQL injection. Raw conditions are NOT automatically safe. Passing
+// user-controlled SQL fragments is unsafe even if arguments use placeholders.
 func (q *QueryBuilder) Where(condition string, args ...any) *QueryBuilder {
 	if condition != "" {
-		// Basic safety: reject conditions containing backticks which could break quoting.
-		if strings.Contains(condition, "`") {
-			q.err = fmt.Errorf("WHERE condition may not contain backticks")
+		// Count placeholders and verify argument count matches.
+		if placeholders := strings.Count(condition, "?"); placeholders != len(args) {
+			q.err = fmt.Errorf("placeholder count mismatch: %d args provided, %d placeholders", len(args), placeholders)
 			return q
 		}
 		q.whereParts = append(q.whereParts, condition)
@@ -160,6 +166,26 @@ func (q *QueryBuilder) ToSQL() (string, []any, error) {
 				}
 				continue
 			}
+			// Backtick-quoted identifier - preserve as-is
+			if ch == '`' {
+				result.WriteByte(ch)
+				i++
+				for i < len(cond) {
+					if cond[i] == '\\' && i+1 < len(cond) {
+						result.WriteByte(cond[i])
+						result.WriteByte(cond[i+1])
+						i += 2
+						continue
+					}
+					result.WriteByte(cond[i])
+					if cond[i] == '`' {
+						i++
+						break
+					}
+					i++
+				}
+				continue
+			}
 			// Identifier or keyword/placeholder
 			if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_' {
 				start := i
@@ -179,9 +205,30 @@ func (q *QueryBuilder) ToSQL() (string, []any, error) {
 					strings.EqualFold(m, "LIKE") || strings.EqualFold(m, "BETWEEN") || strings.EqualFold(m, "EXISTS") ||
 					strings.EqualFold(m, "IS") {
 					result.WriteString(m)
-				} else {
-					result.WriteString("`" + m + "`")
+					continue
 				}
+				if identRe.MatchString(m) {
+					// If followed by '-' it may be part of dashed identifier - pass through whole problematic token
+					if i < len(cond) && cond[i] == '-' {
+						// read rest of dashed sequence
+						j := i
+						for j < len(cond) {
+							c := cond[j]
+							if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-' {
+								j++
+								continue
+							}
+							break
+						}
+						result.WriteString(cond[start:j])
+						i = j
+						continue
+					}
+					result.WriteString("`" + m + "`")
+					continue
+				}
+				// Invalid identifier in raw WHERE — pass through as-is.
+				result.WriteString(m)
 				continue
 			}
 			result.WriteByte(ch)
