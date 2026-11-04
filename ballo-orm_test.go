@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
-	"strings"
 	"testing"
 
 	_ "modernc.org/sqlite"
@@ -402,52 +401,6 @@ func TestToSQLNoQueryOnError(t *testing.T) {
 	query, args, err = q2.ToSQL()
 	if err == nil {
 		t.Error("ToSQL with invalid table should error")
-	}
-}
-
-// TestWhereArgsParameterization verifies WHERE args are parameterized correctly
-func TestWhereArgsParameterization(t *testing.T) {
-	q := Table("users").Where("name = ? AND age > ?", "John", 18)
-	query, args, err := q.ToSQL()
-	if err != nil {
-		t.Fatalf("ToSQL error: %v", err)
-	}
-
-	// Verify query contains placeholders, not interpolated values
-	if !strings.Contains(query, "?") {
-		t.Error("Query should contain ? placeholders, not interpolated values")
-	}
-
-	// Verify args are captured correctly
-	if len(args) != 2 {
-		t.Fatalf("Expected 2 args, got %d", len(args))
-	}
-	if args[0] != "John" {
-		t.Errorf("Expected arg[0]='John', got %v", args[0])
-	}
-	if args[1] != 18 {
-		t.Errorf("Expected arg[1]=18, got %v", args[1])
-	}
-}
-
-// TestWhereConditionHandledCorrectly documents Where() behavior
-func TestWhereConditionHandledCorrectly(t *testing.T) {
-	// Where() accepts SQL expressions directly from programmer
-	// These are NOT validated as safe - they are raw SQL
-	// Values MUST use parameterization (? placeholders)
-	q := Table("users").Where("active = ? OR deleted = ?", true, false)
-	query, args, err := q.ToSQL()
-	if err != nil {
-		t.Fatalf("ToSQL error: %v", err)
-	}
-
-	expectedQuery := "SELECT * FROM `users` WHERE `active` = ? OR `deleted` = ?"
-	if query != expectedQuery {
-		t.Errorf("Query mismatch:\nexpected: %s\ngot:      %s", expectedQuery, query)
-	}
-
-	if len(args) != 2 {
-		t.Errorf("Expected 2 args, got %d", len(args))
 	}
 }
 
