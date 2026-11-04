@@ -1,6 +1,7 @@
 package orm
 
 import (
+	"context"
 	"fmt"
 	"testing"
 )
@@ -16,7 +17,7 @@ func TestDebugFindAll(t *testing.T) {
 			Email: fmt.Sprintf("user%d@example.com", i),
 			Age:   intPtr(20 + i),
 		}
-		err := o.Insert(&u)
+		err := o.Insert(context.Background(), &u)
 		if err != nil {
 			t.Fatalf("Insert %d error: %v", i, err)
 		}
@@ -32,7 +33,7 @@ func TestDebugFindAll(t *testing.T) {
 
 	var users []User
 	q := Table("users").OrderBy("id")
-	err = o.FindAll(q, &users)
+	err = o.FindAll(context.Background(), q, &users)
 	if err != nil {
 		t.Fatalf("FindAll error: %v", err)
 	}

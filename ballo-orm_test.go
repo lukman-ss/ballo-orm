@@ -1,6 +1,7 @@
 package orm
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -130,7 +131,7 @@ func TestORMInsert(t *testing.T) {
 	o := New(db)
 
 	user := User{Name: "John Doe", Email: "john@example.com", Age: intPtr(25)}
-	err := o.Insert(&user)
+	err := o.Insert(context.Background(), &user)
 	if err != nil {
 		t.Fatalf("Insert() error: %v", err)
 	}
@@ -148,13 +149,13 @@ func TestORMFindByID(t *testing.T) {
 	o := New(db)
 
 	user := User{Name: "Jane Doe", Email: "jane@example.com", Age: intPtr(30)}
-	err := o.Insert(&user)
+	err := o.Insert(context.Background(), &user)
 	if err != nil {
 		t.Fatalf("Insert() error: %v", err)
 	}
 
 	var found User
-	err = o.FindByID(user.ID, &found)
+	err = o.FindByID(context.Background(), user.ID, &found)
 	if err != nil {
 		t.Fatalf("FindByID() error: %v", err)
 	}
@@ -169,7 +170,7 @@ func TestORMFindAll(t *testing.T) {
 	o := New(db)
 
 	for i := 0; i < 5; i++ {
-		o.Insert(&User{
+		o.Insert(context.Background(), &User{
 			Name:  fmt.Sprintf("User %d", i),
 			Email: fmt.Sprintf("user%d@example.com", i),
 			Age:   intPtr(20 + i),
@@ -178,7 +179,7 @@ func TestORMFindAll(t *testing.T) {
 
 	var users []User
 	q := Table("users").OrderBy("id")
-	err := o.FindAll(q, &users)
+	err := o.FindAll(context.Background(), q, &users)
 	if err != nil {
 		t.Fatalf("FindAll() error: %v", err)
 	}
@@ -193,19 +194,19 @@ func TestORMUpdate(t *testing.T) {
 	o := New(db)
 
 	user := User{Name: "Update Test", Email: "update@example.com", Age: intPtr(25)}
-	err := o.Insert(&user)
+	err := o.Insert(context.Background(), &user)
 	if err != nil {
 		t.Fatalf("Insert() error: %v", err)
 	}
 
 	user.Name = "Updated Name"
-	err = o.Update(&user)
+	err = o.Update(context.Background(), &user)
 	if err != nil {
 		t.Fatalf("Update() error: %v", err)
 	}
 
 	var updated User
-	err = o.FindByID(user.ID, &updated)
+	err = o.FindByID(context.Background(), user.ID, &updated)
 	if err != nil {
 		t.Fatalf("FindByID() error: %v", err)
 	}
@@ -220,12 +221,12 @@ func TestORMDelete(t *testing.T) {
 	o := New(db)
 
 	user := User{Name: "Delete Test", Email: "delete@example.com", Age: intPtr(25)}
-	err := o.Insert(&user)
+	err := o.Insert(context.Background(), &user)
 	if err != nil {
 		t.Fatalf("Insert() error: %v", err)
 	}
 
-	err = o.Delete(&user)
+	err = o.Delete(context.Background(), &user)
 	if err != nil {
 		t.Fatalf("Delete() error: %v", err)
 	}
@@ -253,7 +254,7 @@ func TestORMTransaction(t *testing.T) {
 	tORM := New(tx)
 
 	user := User{Name: "Tx Test", Email: "tx@example.com", Age: intPtr(25)}
-	err = tORM.Insert(&user)
+	err = tORM.Insert(context.Background(), &user)
 	if err != nil {
 		t.Fatalf("Insert() error: %v", err)
 	}

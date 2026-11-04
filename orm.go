@@ -1,6 +1,7 @@
 package orm
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"reflect"
@@ -9,9 +10,9 @@ import (
 
 // DBExecutor abstracts database operations compatible with *sql.DB and *sql.Tx.
 type DBExecutor interface {
-	Query(query string, args ...any) (*sql.Rows, error)
-	QueryRow(query string, args ...any) *sql.Row
-	Exec(query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
 // ORM provides CRUD operations using a DBExecutor.
@@ -30,7 +31,7 @@ func Table(name string) *QueryBuilder {
 }
 
 // Insert inserts a model into the database.
-func (o *ORM) Insert(model any) error {
+func (o *ORM) Insert(ctx context.Context, model any) error {
 	pk, _ := GetPrimaryKey(model)
 	tb, cols, values := buildInsertQuery(model)
 	// Omit zero primary key so database auto-generates it.
@@ -54,7 +55,7 @@ func (o *ORM) Insert(model any) error {
 		formatColumns(cols),
 		formatPlaceholders(len(cols)),
 	)
-	result, err := o.db.Exec(query, values...)
+	result, err := o.db.ExecContext(ctx, query, values...)
 	if err != nil {
 		return err
 	}
@@ -81,7 +82,7 @@ func (o *ORM) Insert(model any) error {
 }
 
 // FindByID finds a record by primary key.
-func (o *ORM) FindByID(id any, dest any) error {
+func (o *ORM) FindByID(ctx context.Context, id any, dest any) error {
 	pk, found := GetPrimaryKey(dest)
 	if !found {
 		return fmt.Errorf("primary key not found in struct")
@@ -90,7 +91,7 @@ func (o *ORM) FindByID(id any, dest any) error {
 	cols := GetColumns(dest)
 	colList := strings.Join(cols, ", ")
 	query := fmt.Sprintf("SELECT %s FROM %s WHERE %s = ?", colList, table, pk)
-	row := o.db.QueryRow(query, id)
+	row := o.db.QueryRowContext(ctx, query, id)
 
 	// Prepare pointers slice for Scan
 	v := reflect.ValueOf(dest)
@@ -129,12 +130,12 @@ func (o *ORM) FindByID(id any, dest any) error {
 }
 
 // FindAll executes a query and scans results into a slice.
-func (o *ORM) FindAll(q *QueryBuilder, destSlice any) error {
+func (o *ORM) FindAll(ctx context.Context, q *QueryBuilder, destSlice any) error {
 	query, args, err := q.ToSQL()
 	if err != nil {
 		return err
 	}
-	rows, err := o.db.Query(query, args...)
+	rows, err := o.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return err
 	}
@@ -143,17 +144,17 @@ func (o *ORM) FindAll(q *QueryBuilder, destSlice any) error {
 }
 
 // Update updates a model in the database.
-func (o *ORM) Update(model any) error {
+func (o *ORM) Update(ctx context.Context, model any) error {
 	pk, _ := GetPrimaryKey(model)
 	tb, setClauses, values := buildUpdateQuery(model, pk)
 	query := fmt.Sprintf("UPDATE %s SET %s WHERE %s = ?", tb, setClauses, pk)
 	values = append(values, getValue(model, pk))
-	_, err := o.db.Exec(query, values...)
+	_, err := o.db.ExecContext(ctx, query, values...)
 	return err
 }
 
 // Delete deletes a record by primary key.
-func (o *ORM) Delete(model any) error {
+func (o *ORM) Delete(ctx context.Context, model any) error {
 	pk, found := GetPrimaryKey(model)
 	if !found {
 		return fmt.Errorf("primary key not found")
@@ -161,7 +162,7 @@ func (o *ORM) Delete(model any) error {
 	tb := buildTableName(model)
 	val := getValue(model, pk)
 	query := fmt.Sprintf("DELETE FROM %s WHERE %s = ?", tb, pk)
-	_, err := o.db.Exec(query, val)
+	_, err := o.db.ExecContext(ctx, query, val)
 	return err
 }
 

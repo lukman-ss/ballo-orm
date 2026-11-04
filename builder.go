@@ -6,6 +6,16 @@ import (
 	"strings"
 )
 
+var identRe = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
+
+// validateIdent returns error when identifier contains unsafe characters.
+func validateIdent(s string) error {
+	if !identRe.MatchString(s) {
+		return fmt.Errorf("invalid identifier %q", s)
+	}
+	return nil
+}
+
 // QueryBuilder provides fluent interface for building SQL queries.
 type QueryBuilder struct {
 	tableName  string
@@ -16,16 +26,28 @@ type QueryBuilder struct {
 	orderByDir string
 	limitN     int
 	offsetN    int
+	err        error
 }
 
 // Table sets the table name.
 func (q *QueryBuilder) Table(name string) *QueryBuilder {
+	if err := validateIdent(name); err != nil {
+		q.tableName = ""
+		q.err = err
+		return q
+	}
 	q.tableName = name
 	return q
 }
 
 // Select sets the columns to select.
 func (q *QueryBuilder) Select(cols ...string) *QueryBuilder {
+	for _, c := range cols {
+		if err := validateIdent(c); err != nil {
+			q.err = err
+			return q
+		}
+	}
 	q.selectCols = cols
 	return q
 }
@@ -41,6 +63,10 @@ func (q *QueryBuilder) Where(condition string, args ...any) *QueryBuilder {
 
 // OrderBy sets the ORDER BY clause.
 func (q *QueryBuilder) OrderBy(col string, dir ...string) *QueryBuilder {
+	if err := validateIdent(col); err != nil {
+		q.err = err
+		return q
+	}
 	q.orderByCol = col
 	if len(dir) > 0 {
 		q.orderByDir = strings.ToUpper(dir[0])
@@ -67,6 +93,9 @@ func (q *QueryBuilder) Offset(n int) *QueryBuilder {
 
 // ToSQL builds the final SQL query and arguments.
 func (q *QueryBuilder) ToSQL() (string, []any, error) {
+	if q.err != nil {
+		return "", nil, q.err
+	}
 	// Quote identifiers in WHERE clause
 	requote := func(cond string) string {
 		re := regexp.MustCompile(`\b([a-zA-Z_][a-zA-Z0-9_]*)\b`)
