@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	_ "modernc.org/sqlite"
@@ -294,6 +295,161 @@ func TestModelColumns(t *testing.T) {
 }
 
 func intPtr(i int) *int { return &i }
+
+// TestTableConstructorValidation tests that Table() validates identifiers
+func TestTableConstructorValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		table   string
+		wantErr bool
+	}{
+		{"valid simple name", "users", false},
+		{"valid underscore", "user_list", false},
+		{"valid digit", "user1", false},
+		{"invalid dash", "user-list", true},
+		{"invalid space", "user list", true},
+		{"invalid special char", "user@list", true},
+		{"invalid start digit", "123users", true},
+		{"empty string", "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q := Table(tt.table)
+			_, _, err := q.ToSQL()
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("Table(%q) expected error, got nil", tt.table)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Table(%q) unexpected error: %v", tt.table, err)
+				}
+			}
+		})
+	}
+}
+
+// TestTableMethodValidation tests that QueryBuilder.Table() validates identifiers
+func TestTableMethodValidation(t *testing.T) {
+	q := &QueryBuilder{}
+
+	// Valid
+	q = q.Table("users")
+	if q.err != nil {
+		t.Errorf("Table('users') should not error: %v", q.err)
+	}
+
+	// Invalid
+	q = q.Table("bad-table")
+	if q.err == nil {
+		t.Error("Table('bad-table') expected error, got nil")
+	}
+}
+
+// TestSelectValidation tests Select() identifier validation
+func TestSelectValidation(t *testing.T) {
+	q := Table("users")
+
+	// Valid
+	q = q.Select("id", "name")
+	if q.err != nil {
+		t.Errorf("Select valid cols expected no error: %v", q.err)
+	}
+
+	// Invalid
+	q = Table("users").Select("bad col")
+	if q.err == nil {
+		t.Error("Select with invalid col expected error, got nil")
+	}
+}
+
+// TestOrderByValidation tests OrderBy() identifier validation
+func TestOrderByValidation(t *testing.T) {
+	q := Table("users")
+
+	// Valid
+	q = q.OrderBy("name")
+	if q.err != nil {
+		t.Errorf("OrderBy valid col expected no error: %v", q.err)
+	}
+
+	// Invalid
+	q = Table("users").OrderBy("bad-col")
+	if q.err == nil {
+		t.Error("OrderBy with invalid col expected error, got nil")
+	}
+}
+
+// TestToSQLNoQueryOnError verifies ToSQL returns error when builder has invalid state
+func TestToSQLNoQueryOnError(t *testing.T) {
+	// Test invalid table via constructor
+	q1 := Table("invalid!table")
+	query, args, err := q1.ToSQL()
+	if err == nil {
+		t.Error("ToSQL with invalid table should error")
+	}
+	if query != "" {
+		t.Errorf("ToSQL should return empty query on error, got: %s", query)
+	}
+	if args != nil {
+		t.Errorf("ToSQL should return nil args on error, got: %v", args)
+	}
+
+	// Test invalid table via method
+	q2 := &QueryBuilder{}
+	q2.Table("invalid!table")
+	query, args, err = q2.ToSQL()
+	if err == nil {
+		t.Error("ToSQL with invalid table should error")
+	}
+}
+
+// TestWhereArgsParameterization verifies WHERE args are parameterized correctly
+func TestWhereArgsParameterization(t *testing.T) {
+	q := Table("users").Where("name = ? AND age > ?", "John", 18)
+	query, args, err := q.ToSQL()
+	if err != nil {
+		t.Fatalf("ToSQL error: %v", err)
+	}
+
+	// Verify query contains placeholders, not interpolated values
+	if !strings.Contains(query, "?") {
+		t.Error("Query should contain ? placeholders, not interpolated values")
+	}
+
+	// Verify args are captured correctly
+	if len(args) != 2 {
+		t.Fatalf("Expected 2 args, got %d", len(args))
+	}
+	if args[0] != "John" {
+		t.Errorf("Expected arg[0]='John', got %v", args[0])
+	}
+	if args[1] != 18 {
+		t.Errorf("Expected arg[1]=18, got %v", args[1])
+	}
+}
+
+// TestWhereConditionHandledCorrectly documents Where() behavior
+func TestWhereConditionHandledCorrectly(t *testing.T) {
+	// Where() accepts SQL expressions directly from programmer
+	// These are NOT validated as safe - they are raw SQL
+	// Values MUST use parameterization (? placeholders)
+	q := Table("users").Where("active = ? OR deleted = ?", true, false)
+	query, args, err := q.ToSQL()
+	if err != nil {
+		t.Fatalf("ToSQL error: %v", err)
+	}
+
+	expectedQuery := "SELECT * FROM `users` WHERE `active` = ? OR `deleted` = ?"
+	if query != expectedQuery {
+		t.Errorf("Query mismatch:\nexpected: %s\ngot:      %s", expectedQuery, query)
+	}
+
+	if len(args) != 2 {
+		t.Errorf("Expected 2 args, got %d", len(args))
+	}
+}
 
 func TestMain(m *testing.M) {
 	os.Exit(m.Run())

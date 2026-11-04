@@ -27,6 +27,9 @@ func New(db DBExecutor) *ORM {
 
 // Table returns a new QueryBuilder.
 func Table(name string) *QueryBuilder {
+	if err := validateIdent(name); err != nil {
+		return &QueryBuilder{err: err}
+	}
 	return &QueryBuilder{tableName: name}
 }
 
