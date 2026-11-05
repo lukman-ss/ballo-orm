@@ -13,6 +13,7 @@ All notable changes to this project will be documented in this file.
 
 *Docs*
 - Clarified that `Where` does not pass expressions unchanged — `requote` modifies identifiers by quoting them with backticks.
+- Fixed SQL escape examples in `Where` comment to use literal characters: `''`, `""`, `` `` `` instead of typographic quotes.
 
 ---
 *Note: No formal release version has been tagged; entries reflect the current state of the repository.*
