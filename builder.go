@@ -6,10 +6,10 @@ import (
 	"strings"
 )
 
+// identRe matches valid SQL identifiers.
 var identRe = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
-// validateIdent returns error when identifier contains unsafe characters.
-// Validate identifier before usage.
+// validateIdent checks if s is a valid SQL identifier.
 func validateIdent(s string) error {
 	if !identRe.MatchString(s) {
 		return fmt.Errorf("invalid identifier %q", s)
@@ -17,7 +17,7 @@ func validateIdent(s string) error {
 	return nil
 }
 
-// QueryBuilder provides fluent interface for building SQL queries.
+// QueryBuilder provides a fluent interface for building SELECT queries.
 type QueryBuilder struct {
 	tableName  string
 	selectCols []string
@@ -55,17 +55,71 @@ func (q *QueryBuilder) Select(cols ...string) *QueryBuilder {
 
 // Where adds a WHERE clause condition.
 //
-// The condition string is taken as-is; identifiers are quoted safely by ToSQL().
 // Placeholders ("?") are used for values and passed as separate arguments.
+// The condition string is taken as-is; identifiers are quoted safely by ToSQL().
+// String literals (single/double quoted), backtick-quoted identifiers, and SQL comments
+// are respected during placeholder counting to avoid false mismatches.
 //
 // Security note: Where accepts raw SQL expressions from the caller. The condition
 // expression itself is not validated for safety — values MUST use placeholders
 // to prevent SQL injection. Raw conditions are NOT automatically safe. Passing
 // user-controlled SQL fragments is unsafe even if arguments use placeholders.
+func countPlaceholders(cond string) int {
+	count := 0
+	state := "normal"
+	for i := 0; i < len(cond); i++ {
+		ch := cond[i]
+		switch state {
+		case "normal":
+			if ch == '\'' {
+				state = "single"
+			} else if ch == '"' {
+				state = "double"
+			} else if ch == '`' {
+				state = "backtick"
+			} else if ch == '-' && i+1 < len(cond) && cond[i+1] == '-' {
+				state = "line"
+				i++ // skip second '-'
+			} else if ch == '/' && i+1 < len(cond) && cond[i+1] == '*' {
+				state = "block"
+				i++ // skip '*'
+			} else if ch == '?' {
+				count++
+			}
+		case "single":
+			if ch == '\'' {
+				// escaped single quote ''
+				if i+1 < len(cond) && cond[i+1] == '\'' {
+					i++
+					continue
+				}
+				state = "normal"
+			}
+		case "double":
+			if ch == '"' {
+				state = "normal"
+			}
+		case "backtick":
+			if ch == '`' {
+				state = "normal"
+			}
+		case "line":
+			if ch == '\n' {
+				state = "normal"
+			}
+		case "block":
+			if ch == '*' && i+1 < len(cond) && cond[i+1] == '/' {
+				state = "normal"
+				i++
+			}
+		}
+	}
+	return count
+}
+
 func (q *QueryBuilder) Where(condition string, args ...any) *QueryBuilder {
 	if condition != "" {
-		// Count placeholders and verify argument count matches.
-		if placeholders := strings.Count(condition, "?"); placeholders != len(args) {
+		if placeholders := countPlaceholders(condition); placeholders != len(args) {
 			q.err = fmt.Errorf("placeholder count mismatch: %d args provided, %d placeholders", len(args), placeholders)
 			return q
 		}

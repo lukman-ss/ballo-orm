@@ -444,27 +444,27 @@ func TestWhereStringLiteralPreservation(t *testing.T) {
 		{
 			name:     "single quoted literal",
 			cond:     "name = 'John'",
-			expected: "`name` = 'John'",
+			expected: "SELECT * FROM `users` WHERE `name` = 'John'",
 		},
 		{
 			name:     "single quoted with escaped quote",
 			cond:     "name = 'O''Brien'",
-			expected: "`name` = 'O''Brien'",
+			expected: "SELECT * FROM `users` WHERE `name` = 'O''Brien'",
 		},
 		{
 			name:     "double quoted literal",
 			cond:     "name = \"John\"",
-			expected: "`name` = \"John\"",
+			expected: "SELECT * FROM `users` WHERE `name` = \"John\"",
 		},
 		{
 			name:     "multiple literals",
 			cond:     "name = 'Alice' AND status = 'active'",
-			expected: "`name` = 'Alice' AND `status` = 'active'",
+			expected: "SELECT * FROM `users` WHERE `name` = 'Alice' AND `status` = 'active'",
 		},
 		{
 			name:     "literal with backslash escape",
 			cond:     "path = 'C:\\Users\\test'",
-			expected: "`path` = 'C:\\Users\\test'",
+			expected: "SELECT * FROM `users` WHERE `path` = 'C:\\Users\\test'",
 		},
 	}
 
@@ -475,7 +475,7 @@ func TestWhereStringLiteralPreservation(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ToSQL() error: %v", err)
 			}
-			want := "SELECT * FROM `users` WHERE " + tt.expected
+			want := tt.expected
 			if query != want {
 				t.Errorf("query mismatch:\nexpected: %s\ngot:      %s", want, query)
 			}
@@ -566,6 +566,7 @@ func TestWhereBacktickPreservation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ToSQL() error: %v", err)
 	}
+	// backtick-quoted identifiers pass through as-is
 	want := "SELECT * FROM `users` WHERE `name` = 'test'"
 	if query != want {
 		t.Errorf("query mismatch:\nexpected: %s\ngot:      %s", want, query)
@@ -640,20 +641,19 @@ func TestOffsetZero(t *testing.T) {
 // TestWhereDangerousIdentifierInjection verifies dangerous identifiers are not auto-sanitized
 // and raw WHERE expressions are NOT automatically safe from SQL injection.
 func TestWhereDangerousIdentifierInjection(t *testing.T) {
-	// Attempt with SQL comment injection in raw identifier
 	q := Table("users").Where("id = ?; DROP TABLE users; --", 1)
 	query, args, err := q.ToSQL()
 	if err != nil {
 		t.Fatalf("ToSQL() error: %v", err)
 	}
-	if strings.Contains(query, "DROP TABLE") {
-		// Raw expression passes through - caller must be responsible
-		// Document that it's unsafe
+	// Raw expression passes through unchanged — caller is responsible for safety.
+	want := "SELECT * FROM `users` WHERE `id` = ?; `DROP` `TABLE` `users`; --"
+	if query != want {
+		t.Errorf("query mismatch:\nexpected: %s\ngot:      %s", want, query)
 	}
-	if len(args) != 1 {
-		t.Errorf("args should be preserved separately")
+	if len(args) != 1 || args[0] != 1 {
+		t.Errorf("args should be preserved separately: got %v", args)
 	}
-	_ = query
 }
 
 // TestWhereRawExpressionNotAutoSafe documents and tests that raw WHERE is NOT auto-safe
@@ -719,5 +719,126 @@ func TestWherePlaceholderInjectionPrevention(t *testing.T) {
 	}
 	if len(args) != 1 || args[0] != malicious {
 		t.Errorf("malicious arg not preserved separately: %v", args)
+	}
+}
+
+// TestWherePlaceholderCounting ignores question marks inside literals/quotes/comments.
+func TestWherePlaceholderCounting(t *testing.T) {
+	tests := []struct {
+		name      string
+		cond      string
+		args      []any
+		wantErr   bool
+		wantQuery string
+	}{
+		{
+			name:      "placeholder outside quotes",
+			cond:      "name = ?",
+			args:      []any{"John"},
+			wantErr:   false,
+			wantQuery: "SELECT * FROM `users` WHERE `name` = ?",
+		},
+		{
+			name:      "question mark inside single-quoted literal",
+			cond:      "name = '?'",
+			args:      nil,
+			wantErr:   false,
+			wantQuery: "SELECT * FROM `users` WHERE `name` = '?'",
+		},
+		{
+			name:      "question mark inside double-quoted literal",
+			cond:      `name = "?"`,
+			args:      nil,
+			wantErr:   false,
+			wantQuery: "SELECT * FROM `users` WHERE `name` = \"?\"",
+		},
+		{
+			name:      "question mark outside backtick identifier",
+			cond:      "`col` = ?",
+			args:      []any{1},
+			wantErr:   false,
+			wantQuery: "SELECT * FROM `users` WHERE `col` = ?",
+		},
+		{
+			name:      "placeholder with escaped quote literal",
+			cond:      "name = 'O''?'",
+			args:      nil,
+			wantErr:   false,
+			wantQuery: "SELECT * FROM `users` WHERE `name` = 'O''?'",
+		},
+		{
+			name:      "question mark in SQL comment",
+			cond:      "id = 1 -- ?",
+			args:      nil,
+			wantErr:   false,
+			wantQuery: "SELECT * FROM `users` WHERE `id` = 1 -- ?",
+		},
+		{
+			name:      "question mark in block comment",
+			cond:      "id = 1 /* ? */",
+			args:      nil,
+			wantErr:   false,
+			wantQuery: "SELECT * FROM `users` WHERE `id` = 1 /* ? */",
+		},
+		{
+			name:      "mixed placeholders and question marks in literals",
+			cond:      "name = ? AND note = '?'",
+			args:      []any{"John"},
+			wantErr:   false,
+			wantQuery: "SELECT * FROM `users` WHERE `name` = ? AND `note` = '?'",
+		},
+		{
+			name:      "mismatch still detected when real placeholders differ",
+			cond:      "id = ? AND name = ?",
+			args:      []any{1},
+			wantErr:   true,
+			wantQuery: "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q := Table("users").Where(tt.cond, tt.args...)
+			query, args, err := q.ToSQL()
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got query: %s", query)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			want := tt.wantQuery
+			if want == "" {
+				want = "SELECT * FROM `users` WHERE " + tt.cond
+			}
+			if query != want {
+				t.Errorf("query mismatch:\nexpected: %s\ngot:      %s", want, query)
+			}
+			if len(args) != len(tt.args) {
+				t.Errorf("args length mismatch: got %d, want %d", len(args), len(tt.args))
+			}
+			for i, got := range args {
+				if got != tt.args[i] {
+					t.Errorf("arg[%d] mismatch: got %v, want %v", i, got, tt.args[i])
+				}
+			}
+		})
+	}
+}
+
+// TestWhereMultipleCalls verifies multiple Where calls accumulate parts and args.
+func TestWhereMultipleCalls(t *testing.T) {
+	q := Table("users").Where("id = ?", 1).Where("name = ?", "John")
+	query, args, err := q.ToSQL()
+	if err != nil {
+		t.Fatalf("ToSQL() error: %v", err)
+	}
+	want := "SELECT * FROM `users` WHERE `id` = ? AND `name` = ?"
+	if query != want {
+		t.Errorf("query mismatch:\nexpected: %s\ngot:      %s", want, query)
+	}
+	if len(args) != 2 || args[0] != 1 || args[1] != "John" {
+		t.Errorf("args mismatch: %v", args)
 	}
 }
