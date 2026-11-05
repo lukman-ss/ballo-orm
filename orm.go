@@ -28,9 +28,9 @@ func New(db DBExecutor) *ORM {
 // Table returns a new QueryBuilder.
 func Table(name string) *QueryBuilder {
 	if err := validateIdent(name); err != nil {
-		return &QueryBuilder{err: err}
+		return &QueryBuilder{err: err, dialect: defaultDialect}
 	}
-	return &QueryBuilder{tableName: name}
+	return &QueryBuilder{tableName: name, dialect: defaultDialect}
 }
 
 // Insert inserts a model into the database.

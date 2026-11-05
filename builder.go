@@ -28,6 +28,7 @@ type QueryBuilder struct {
 	limitN     int
 	offsetN    int
 	err        error
+	dialect    Dialect
 }
 
 // Table sets the table name.
@@ -189,12 +190,23 @@ func (q *QueryBuilder) Offset(n int) *QueryBuilder {
 	return q
 }
 
+// Dialect sets the SQL dialect for the query builder.
+func (q *QueryBuilder) Dialect(d Dialect) *QueryBuilder {
+	if d != nil {
+		q.dialect = d
+	}
+	return q
+}
+
 // ToSQL builds the final SQL query and arguments.
 func (q *QueryBuilder) ToSQL() (string, []any, error) {
 	if q.err != nil {
 		return "", nil, q.err
 	}
-	// Quote identifiers in WHERE clause
+	if q.dialect == nil {
+		q.dialect = defaultDialect
+	}
+	// Quote identifiers in WHERE clause using the dialect.
 	requote := func(cond string) string {
 		// Track single/double quotes to avoid re-quoting inside string literals
 		var result strings.Builder
@@ -318,7 +330,7 @@ func (q *QueryBuilder) ToSQL() (string, []any, error) {
 						i = j
 						continue
 					}
-					result.WriteString("`" + m + "`")
+					result.WriteString(q.dialect.QuoteIdent(m))
 					continue
 				}
 				// Invalid identifier in raw WHERE — pass through as-is.
@@ -345,15 +357,12 @@ func (q *QueryBuilder) ToSQL() (string, []any, error) {
 			if i > 0 {
 				query.WriteString(", ")
 			}
-			query.WriteString("`")
-			query.WriteString(col)
-			query.WriteString("`")
+			query.WriteString(q.dialect.QuoteIdent(col))
 		}
 	}
 
-	query.WriteString(" FROM `")
-	query.WriteString(q.tableName)
-	query.WriteString("`")
+	query.WriteString(" FROM ")
+	query.WriteString(q.dialect.QuoteIdent(q.tableName))
 
 	// WHERE
 	if len(q.whereParts) > 0 {
@@ -367,22 +376,15 @@ func (q *QueryBuilder) ToSQL() (string, []any, error) {
 
 	// ORDER BY
 	if q.orderByCol != "" {
-		query.WriteString(" ORDER BY `")
-		query.WriteString(q.orderByCol)
-		query.WriteString("` ")
+		query.WriteString(" ORDER BY ")
+		query.WriteString(q.dialect.QuoteIdent(q.orderByCol))
+		query.WriteString(" ")
 		query.WriteString(q.orderByDir)
 	}
 
-	// LIMIT
-	if q.limitN > 0 {
-		query.WriteString(" LIMIT ")
-		query.WriteString(fmt.Sprintf("%d", q.limitN))
-	}
-
-	// OFFSET
-	if q.offsetN > 0 {
-		query.WriteString(" OFFSET ")
-		query.WriteString(fmt.Sprintf("%d", q.offsetN))
+	// LIMIT/OFFSET via dialect
+	if q.limitN > 0 || q.offsetN > 0 {
+		query.WriteString(q.dialect.LimitOffset(q.limitN, q.offsetN))
 	}
 
 	return query.String(), q.whereArgs, nil

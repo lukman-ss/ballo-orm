@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file.
 
 ## Unreleased
+*Added*
+- Pluggable `Dialect` interface with `QuoteIdent`, `Placeholder`, `LimitOffset` methods.
+- `sqliteDialect` implementation (backtick quoting, `?` placeholders, SQLite-style LIMIT/OFFSET).
+- `QueryBuilder.Dialect()` method to configure dialect per query builder.
+- QueryBuilder uses dialect for identifier quoting in `SELECT`, `FROM`, `ORDER BY`, and `requote` for `WHERE` identifiers.
+- LIMIT/OFFSET generation delegated to dialect.
+
 *Changed*
 - `countPlaceholders` now handles escape sequences: `''` and `\` in single-quoted strings, `""` and `\` in double-quoted strings, `` `` `` and `\` in backtick identifiers.
 - Placeholder counting correctly ignores `?` inside quoted literals and comments regardless of escape style.

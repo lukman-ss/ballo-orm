@@ -101,7 +101,7 @@ func TestQueryBuilder(t *testing.T) {
 			build: func() *QueryBuilder {
 				return Table("users").Offset(20)
 			},
-			expected: "SELECT * FROM `users` OFFSET 20",
+			expected: "SELECT * FROM `users` LIMIT 9223372036854775807 OFFSET 20",
 		},
 		{
 			name: "full query",
