@@ -109,6 +109,7 @@ All tests run against an in‑memory SQLite database and verify the core functio
 - No built‑in support for complex relationships or migrations – users manage schema themselves.
 - **Security**: `Where` accepts raw SQL strings. Caller must ensure values use placeholders to prevent injection. Raw identifiers are quoted when safe; invalid identifiers pass through unchanged.
 - **Dialect**: QueryBuilder uses backticks for identifier quoting, compatible with MySQL and SQLite. Other dialects may require manual adjustments.
+- **Placeholder counting**: Placeholders (`?`) inside string literals (single/double quoted), backtick-quoted identifiers, and SQL comments (`--`, `/* */`) are not counted. Escaped quotes (`''`, `""`, `` ` ``) and backslash escapes (`\`) inside quoted text are respected.
 
 ---
 *Generated from the actual codebase; features not present in the source are omitted.*

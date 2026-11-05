@@ -646,7 +646,8 @@ func TestWhereDangerousIdentifierInjection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ToSQL() error: %v", err)
 	}
-	// Raw expression passes through unchanged — caller is responsible for safety.
+	// identifiers in raw WHERE are quoted by requote, raw expression parts are preserved
+	// The ? placeholder is preserved; the dangerous SQL fragment is passed through
 	want := "SELECT * FROM `users` WHERE `id` = ?; `DROP` `TABLE` `users`; --"
 	if query != want {
 		t.Errorf("query mismatch:\nexpected: %s\ngot:      %s", want, query)
@@ -793,6 +794,112 @@ func TestWherePlaceholderCounting(t *testing.T) {
 			args:      []any{1},
 			wantErr:   true,
 			wantQuery: "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q := Table("users").Where(tt.cond, tt.args...)
+			query, args, err := q.ToSQL()
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got query: %s", query)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			want := tt.wantQuery
+			if want == "" {
+				want = "SELECT * FROM `users` WHERE " + tt.cond
+			}
+			if query != want {
+				t.Errorf("query mismatch:\nexpected: %s\ngot:      %s", want, query)
+			}
+			if len(args) != len(tt.args) {
+				t.Errorf("args length mismatch: got %d, want %d", len(args), len(tt.args))
+			}
+			for i, got := range args {
+				if got != tt.args[i] {
+					t.Errorf("arg[%d] mismatch: got %v, want %v", i, got, tt.args[i])
+				}
+			}
+		})
+	}
+}
+
+// TestWhereEscapedQuotes tests that escaped quotes inside quoted text
+// do not end the literal prematurely and placeholders inside are ignored.
+func TestWhereEscapedQuotes(t *testing.T) {
+	tests := []struct {
+		name      string
+		cond      string
+		args      []any
+		wantErr   bool
+		wantQuery string
+	}{
+		{
+			name:      "escaped single quote in single-quoted literal",
+			cond:      "name = 'O''Brien'",
+			args:      nil,
+			wantErr:   false,
+			wantQuery: "SELECT * FROM `users` WHERE `name` = 'O''Brien'",
+		},
+		{
+			name:      "escaped double quote in double-quoted literal",
+			cond:      `name = "O""Brien"`,
+			args:      nil,
+			wantErr:   false,
+			wantQuery: "SELECT * FROM `users` WHERE `name` = \"O\"\"Brien\"",
+		},
+		{
+			name:      "escaped backtick in backtick-quoted identifier",
+			cond:      "`col``x` = ?",
+			args:      []any{1},
+			wantErr:   false,
+			wantQuery: "SELECT * FROM `users` WHERE `col``x` = ?",
+		},
+		{
+			name:      "question mark inside escaped single-quoted literal",
+			cond:      "name = 'O''?'",
+			args:      nil,
+			wantErr:   false,
+			wantQuery: "SELECT * FROM `users` WHERE `name` = 'O''?'",
+		},
+		{
+			name:      "question mark inside escaped double-quoted literal",
+			cond:      `name = "O""?"`,
+			args:      nil,
+			wantErr:   false,
+			wantQuery: "SELECT * FROM `users` WHERE `name` = \"O\"\"?\"",
+		},
+		{
+			name:      "backslash escape inside single-quoted literal",
+			cond:      "path = 'C:\\\\Users\\\\test'",
+			args:      nil,
+			wantErr:   false,
+			wantQuery: "SELECT * FROM `users` WHERE `path` = 'C:\\\\Users\\\\test'",
+		},
+		{
+			name:      "backslash escape inside double-quoted literal",
+			cond:      "path = \"C:\\\\Users\\\\test\"",
+			args:      nil,
+			wantErr:   false,
+			wantQuery: "SELECT * FROM `users` WHERE `path` = \"C:\\\\Users\\\\test\"",
+		},
+		{
+			name:      "backslash escape inside backtick-quoted identifier",
+			cond:      "`col\\`x` = ?",
+			args:      []any{1},
+			wantErr:   false,
+			wantQuery: "SELECT * FROM `users` WHERE `col\\`x` = ?",
+		},
+		{
+			name:      "placeholder valid outside escaped literal",
+			cond:      "name = ? AND note = 'O''Brien'",
+			args:      []any{"John"},
+			wantErr:   false,
+			wantQuery: "SELECT * FROM `users` WHERE `name` = ? AND `note` = 'O''Brien'",
 		},
 	}
 	for _, tt := range tests {

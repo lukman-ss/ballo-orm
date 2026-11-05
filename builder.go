@@ -60,6 +60,12 @@ func (q *QueryBuilder) Select(cols ...string) *QueryBuilder {
 // String literals (single/double quoted), backtick-quoted identifiers, and SQL comments
 // are respected during placeholder counting to avoid false mismatches.
 //
+// Escapes supported:
+//   - Single-quoted strings: ” for escaped quote, \ for backslash escapes
+//   - Double-quoted strings: "" for escaped quote, \ for backslash escapes
+//   - Backtick-quoted identifiers: “ for escaped backtick, \ for backslash escapes
+//   - SQL comments: -- line comments, /* block comments */
+//
 // Security note: Where accepts raw SQL expressions from the caller. The condition
 // expression itself is not validated for safety — values MUST use placeholders
 // to prevent SQL injection. Raw conditions are NOT automatically safe. Passing
@@ -94,14 +100,30 @@ func countPlaceholders(cond string) int {
 					continue
 				}
 				state = "normal"
+			} else if ch == '\\' && i+1 < len(cond) {
+				i++ // skip escaped character
 			}
 		case "double":
 			if ch == '"' {
+				// escaped double quote ""
+				if i+1 < len(cond) && cond[i+1] == '"' {
+					i++
+					continue
+				}
 				state = "normal"
+			} else if ch == '\\' && i+1 < len(cond) {
+				i++ // skip escaped character
 			}
 		case "backtick":
 			if ch == '`' {
+				// escaped backtick ``
+				if i+1 < len(cond) && cond[i+1] == '`' {
+					i++
+					continue
+				}
 				state = "normal"
+			} else if ch == '\\' && i+1 < len(cond) {
+				i++ // skip escaped character
 			}
 		case "line":
 			if ch == '\n' {
@@ -191,6 +213,12 @@ func (q *QueryBuilder) ToSQL() (string, []any, error) {
 						i += 2
 						continue
 					}
+					if cond[i] == '\'' && i+1 < len(cond) && cond[i+1] == '\'' {
+						result.WriteByte('\'')
+						result.WriteByte('\'')
+						i += 2
+						continue
+					}
 					result.WriteByte(cond[i])
 					if cond[i] == '\'' {
 						i++
@@ -211,6 +239,12 @@ func (q *QueryBuilder) ToSQL() (string, []any, error) {
 						i += 2
 						continue
 					}
+					if cond[i] == '"' && i+1 < len(cond) && cond[i+1] == '"' {
+						result.WriteByte('"')
+						result.WriteByte('"')
+						i += 2
+						continue
+					}
 					result.WriteByte(cond[i])
 					if cond[i] == '"' {
 						i++
@@ -228,6 +262,12 @@ func (q *QueryBuilder) ToSQL() (string, []any, error) {
 					if cond[i] == '\\' && i+1 < len(cond) {
 						result.WriteByte(cond[i])
 						result.WriteByte(cond[i+1])
+						i += 2
+						continue
+					}
+					if cond[i] == '`' && i+1 < len(cond) && cond[i+1] == '`' {
+						result.WriteByte('`')
+						result.WriteByte('`')
 						i += 2
 						continue
 					}
