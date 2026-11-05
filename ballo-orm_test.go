@@ -646,7 +646,7 @@ func TestWhereDangerousIdentifierInjection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ToSQL() error: %v", err)
 	}
-	// identifiers in raw WHERE are quoted by requote, raw expression parts are preserved
+	// identifiers in raw WHERE are quoted by requote; raw SQL fragments pass through
 	// The ? placeholder is preserved; the dangerous SQL fragment is passed through
 	want := "SELECT * FROM `users` WHERE `id` = ?; `DROP` `TABLE` `users`; --"
 	if query != want {

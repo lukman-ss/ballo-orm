@@ -56,9 +56,9 @@ func (q *QueryBuilder) Select(cols ...string) *QueryBuilder {
 // Where adds a WHERE clause condition.
 //
 // Placeholders ("?") are used for values and passed as separate arguments.
-// The condition string is taken as-is; identifiers are quoted safely by ToSQL().
-// String literals (single/double quoted), backtick-quoted identifiers, and SQL comments
-// are respected during placeholder counting to avoid false mismatches.
+// The condition string is parsed by requote: identifiers are quoted with backticks,
+// while string literals (single/double quoted), backtick-quoted identifiers, and
+// SQL comments are preserved as-is during placeholder counting.
 //
 // Escapes supported:
 //   - Single-quoted strings: ” for escaped quote, \ for backslash escapes
